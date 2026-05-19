@@ -1,15 +1,15 @@
-from loader import logger
+from src.loader import logger
 import requests
-from exceptions import NetworkError, FileProcessingError
+from src.exceptions import NetworkError, FileProcessingError
 from typing import Optional, Dict, Any
 
 
 class YandexDisk:
     """
-       Класс для работы с REST API Яндекс.Диска.
-       Обеспечивает операции получения информации, загрузки,
-       перезаписи и удаления файлов в облачной папке.
-       """
+    Класс для работы с REST API Яндекс.Диска.
+    Обеспечивает операции получения информации, загрузки,
+    перезаписи и удаления файлов в облачной папке.
+    """
 
     def __init__(self, token: str, cloud_folder: str) -> None:
         logger.debug("Работа инициации класса YandexDisk")
@@ -26,22 +26,23 @@ class YandexDisk:
         self.headers = {
             "Accept": "application/json",
             "Content-Type": "application/json",
-            "Authorization": f"OAuth {self.token}"
+            "Authorization": f"OAuth {self.token}",
         }
 
-
-
-    def _request(self,
+    def _request(
+        self,
         method: str,
         url: Optional[str] = None,
         params: Optional[Dict[str, Any]] = None,
-        data: Optional[Any] = None
+        data: Optional[Any] = None,
     ) -> requests.Response:
         """Метод для выполнения HTTP запросов к API Яндекс.Диска."""
         url = url or self.base_url
         logger.debug(f"{method} запрос к {url} с параметрами {params}")
         try:
-            response = requests.request(method, url, headers=self.headers, params=params, data=data)
+            response = requests.request(
+                method, url, headers=self.headers, params=params, data=data
+            )
             response.raise_for_status()
             logger.debug(f"Успешный ответ: {response.status_code}")
             return response
@@ -49,18 +50,19 @@ class YandexDisk:
             logger.error(f"Ошибка запроса: {e}")
             raise NetworkError(operation=f"{method} {url}", details=str(e)) from e
 
-
     def get_info(self) -> Optional[list]:
         """Получение информации о файлах в облачной папке."""
         logger.debug("Анализ файлов на облачном диске")
-        params = {"path": self.cloud_folder, "fields": "_embedded.items.name,_embedded.items.size"}
+        params = {
+            "path": self.cloud_folder,
+            "fields": "_embedded.items.name,_embedded.items.size",
+        }
         response = self._request("GET", params=params)
         if response:
             items = response.json().get("_embedded", {}).get("items", [])
             logger.debug(f"Найдено {len(items)} файлов")
             return [{"name": item["name"], "size": item["size"]} for item in items]
         return None
-
 
     def _get_upload_link(self, path: str, overwrite: bool = False) -> str:
         """Получение ссылки для загрузки файла на Яндекс.Диск."""
@@ -71,10 +73,11 @@ class YandexDisk:
         href = response.json().get("href")
         if not href:
             logger.error("Ссылка на загрузку не получена")
-            raise NetworkError(operation="Получение ссылки загрузки", details="Нет поля href в ответе")
+            raise NetworkError(
+                operation="Получение ссылки загрузки", details="Нет поля href в ответе"
+            )
         logger.debug(f"Получена ссылка загрузки: {href}")
         return href
-
 
     def load(self, local_path: str) -> None:
         """Загрузка нового файла на Яндекс.Диск."""
@@ -96,7 +99,6 @@ class YandexDisk:
             logger.error(f"Ошибка загрузки файла {filename}: {e}")
             raise NetworkError(operation="загрузка файла", details=str(e)) from e
 
-
     def reload(self, local_path: str) -> None:
         """Перезапись файла на Яндекс.Диске."""
 
@@ -104,7 +106,9 @@ class YandexDisk:
         filename = local_path.split("/")[-1]
         cloud_file_path = f"{self.cloud_folder}/{filename}"
         logger.debug(f"Перезапись файла {filename} в {cloud_file_path}")
-        url = self._get_upload_link(cloud_file_path, overwrite=True) # разрешаю перезапись измененых файлов
+        url = self._get_upload_link(
+            cloud_file_path, overwrite=True
+        )  # разрешаю перезапись измененых файлов
         try:
             with open(local_path, "rb") as f:
                 response = requests.put(url, data=f, timeout=30)
@@ -117,7 +121,6 @@ class YandexDisk:
             logger.error(f"Ошибка перезаписи файла {filename}: {e}")
             raise NetworkError(operation="перезапись файла", details=str(e)) from e
 
-
     def delete(self, filename: str) -> None:
         """Удаление файла из облачной папки."""
 
@@ -129,5 +132,9 @@ class YandexDisk:
         if response.status_code == 204:
             logger.info(f"Файл {filename} успешно удалён.")
         else:
-            logger.error(f"Не удалось удалить файл {filename}, HTTP {response.status_code}")
-            raise NetworkError(operation="удаление файла", details=f"HTTP {response.status_code}")
+            logger.error(
+                f"Не удалось удалить файл {filename}, HTTP {response.status_code}"
+            )
+            raise NetworkError(
+                operation="удаление файла", details=f"HTTP {response.status_code}"
+            )
