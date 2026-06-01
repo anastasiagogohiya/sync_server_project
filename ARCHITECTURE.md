@@ -8,8 +8,7 @@ data_synchronization_server_project/
 ├── .gitignore
 ├── pyproject.toml        # зависимости, настройки
 ├── Makefile              # команды
-├── README.md
-├── ARCHITECTURE.md      
+├── README.md, ARCHITECTURE.md 
 ├── src/
 │   ├── main.py           # точка входа
 │   ├── config.py         # чтение и валидация .env

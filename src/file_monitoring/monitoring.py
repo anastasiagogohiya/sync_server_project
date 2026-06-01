@@ -10,11 +10,22 @@ class FileMonitoring:
     def __init__(self, disk, local_folder: str, cloud_folder: str) -> None:
         self.disk = disk
         self.local_folder = local_folder
+        #if not os.path.isdir(local_folder):
+        #    raise FileProcessingError(filename=local_folder, details="Папка не существует")
         self.cloud_folder = cloud_folder
-        self.previous_files: Dict[str, Any] = {}
+        self.previous_files: Dict[str, Any] = {} # для кеширования изменений
         self.cloud_files: Dict[
             str, Any
-        ] = {}  # будем здесь хранить список облачных файлов при старте
+        ] = {}  # для кеширования будем здесь хранить список облачных файлов при старте
+
+    def _safe_call(self, operation: str, func, *args, **kwargs):
+        """Выполняет функцию с обработкой ошибок и преобразованием в NetworkError."""
+        try:
+            return func(*args, **kwargs)
+        except Exception as e:
+            logger.error(f"Ошибка при {operation}: {e}")
+            raise NetworkError(operation=operation, details=str(e)) from e
+
 
     def cache_cloud_files(self) -> None:
         """Загружает и кэширует список файлов из облачной папки."""
@@ -37,20 +48,17 @@ class FileMonitoring:
         # Удаление файлов из облака, отсутствующих локально
         for filename in cloud_files_names - local_files:
             logger.debug(f"Удаление файла из облака: {filename}")
-            self.disk.delete(filename)
+            self._safe_call("удаление", self.disk.delete, filename)
 
         # Загрузка или обновление локальных файлов в облако
         for filename in local_files:
             local_path = os.path.join(self.local_folder, filename)
-            if filename not in self.cloud_files:
-                logger.debug(f"Загрузка нового файла: {filename}")
-                self.disk.load(local_path)
-            else:
-                logger.debug(f"Обновление файла в облаке: {filename}")
-                self.disk.reload(local_path)
+            logger.debug(f"Загрузка/обновление: {filename}")
+            self._safe_call("загрузка/обновление", self.disk.upload, local_path)
 
         # После зеркальной синхронизации обновляем кэш облачных файлов
         self.cache_cloud_files()
+        self.previous_files = local_files_state # обновляем статус файлов
 
     def get_files_state(self) -> Dict[str, float]:
         """Анализирует локальную папку и возвращает словарь файлов
@@ -65,43 +73,23 @@ class FileMonitoring:
                     files[filename] = os.path.getmtime(path)
         except OSError as e:
             logger.error(f"Ошибка при чтении папок/файлов: {e}")
-            raise FileProcessingError(str(e)) from e
+            raise FileProcessingError(details=str(e))
         else:
             return files
 
-    def upload_new_files(self, current_state: Dict[str, float]) -> None:
-        """Загружает на облако файлы, отсутствующие в предыдущем состоянии."""
 
-        for filename, change_time in current_state.items():
-            if filename not in self.previous_files:
-                local_path = os.path.join(self.local_folder, filename)
-                try:
-                    self.disk.load(local_path)  # Загружаем с overwrite=True внутри load
-                except Exception as e:
-                    logger.error(f"Ошибка загрузки файла {filename}: {e}")
-                    raise NetworkError(
-                        operation="загрузка файла", details=str(e)
-                    ) from e
-
-    def update_modified_files(self, current_state: Dict[str, float]) -> None:
-        """Перезаписывает на облаке локально изменённые файлы."""
+    def upload(self, current_status: Dict[str, float]) -> None:
+        """Загружает на облако файлы, отсутствующие в предыдущем состоянии.
+        Перезаписывает на облаке локально изменённые файлы."""
 
         logger.debug("Поиск изменённых файлов...")
-        for filename, change_time in current_state.items():
-            if (
-                filename in self.previous_files
-                and self.previous_files[filename] != change_time
-            ):
+        for filename, change_time in current_status.items():
+            # если файл новый или изменилось время файла существующего
+            if filename not in self.previous_files\
+                    or self.previous_files[filename] != change_time:
                 local_path = os.path.join(self.local_folder, filename)
-                try:
-                    self.disk.reload(
-                        local_path
-                    )  # reload должен делать перезапись с overwrite=True
-                except Exception as e:
-                    logger.error(f"Ошибка перезаписи файла {filename}: {e}")
-                    raise NetworkError(
-                        operation="перезапись файла", details=str(e)
-                    ) from e
+                self._safe_call("загрузка/обновление", self.disk.upload, local_path)
+
 
     def delete_removed_files(self, current_state: Dict[str, float]) -> None:
         """Удаляет из облака файлы, которые были удалены локально."""
@@ -109,11 +97,7 @@ class FileMonitoring:
         logger.debug("Поиск удаленных файлов...")
         for filename in self.previous_files:
             if filename not in current_state:
-                try:
-                    self.disk.delete(filename)
-                except Exception as e:
-                    logger.error(f"Ошибка удаления {filename}: {e}")
-                    raise NetworkError(str(e))
+                self._safe_call("удаление", self.disk.delete, filename)
 
     def sync(self) -> None:
         """Запускает последовательную синхронизацию: загрузку новых файлов,
@@ -121,7 +105,6 @@ class FileMonitoring:
         Обновляет состояние previous_files."""
         logger.debug("Запуск синхронизации...")
         current_state = self.get_files_state()
-        self.upload_new_files(current_state)
-        self.update_modified_files(current_state)
+        self.upload(current_state)
         self.delete_removed_files(current_state)
         self.previous_files = current_state

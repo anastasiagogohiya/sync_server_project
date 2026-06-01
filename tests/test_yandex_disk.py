@@ -6,17 +6,20 @@ from src.cloud.yandex_disk import YandexDisk
 from src.exceptions import NetworkError, FileProcessingError
 
 
-# Фикстура для создания экземпляра YandexDisk с валидными параметрами
+# Фикстура для создания экземпляра YandexDisk
 @pytest.fixture
 def yandex_disk():
-    return YandexDisk(token="test_token", cloud_folder="test_folder")
+    # Мокаем _ensure_folder, чтобы при инициализации не делать реальных запросов
+    with patch.object(YandexDisk, "_ensure_folder", return_value=None):
+        disk = YandexDisk(token="test_token", cloud_folder="test_folder")
+    return disk
 
 
-# Тесты для __init__
 class TestInit:
     def test_valid_init(self):
         """Инициализация с корректными параметрами."""
-        disk = YandexDisk(token="abc", cloud_folder="folder")
+        with patch.object(YandexDisk, "_ensure_folder", return_value=None):
+            disk = YandexDisk(token="abc", cloud_folder="folder")
         assert disk.token == "abc"
         assert disk.cloud_folder == "folder"
         assert disk.base_url == "https://cloud-api.yandex.net/v1/disk/resources"
@@ -51,6 +54,7 @@ class TestRequest:
             headers=yandex_disk.headers,
             params={"a": 1},
             data=None,
+            timeout=30,
         )
 
     def test_request_with_custom_url(self, yandex_disk):
@@ -65,6 +69,7 @@ class TestRequest:
             headers=yandex_disk.headers,
             params=None,
             data="test",
+            timeout=30,
         )
 
     def test_request_raises_network_error(self, yandex_disk):
@@ -76,6 +81,38 @@ class TestRequest:
                 yandex_disk._request("GET")
 
         assert "GET https://cloud-api.yandex.net/v1/disk/resources" in str(exc_info.value)
+
+
+# Тесты для _ensure_folder
+class TestEnsureFolder:
+    def test_folder_exists(self, yandex_disk):
+        """Если папка существует, ничего не создаётся."""
+        with patch.object(yandex_disk, "_request") as mock_request:
+            # Папка есть -> GET возвращает успех
+            yandex_disk._ensure_folder()
+            mock_request.assert_called_once_with("GET", params={"path": "test_folder"})
+
+    def test_folder_not_exists_creates(self, yandex_disk):
+        """Если папки нет (404), создаём её."""
+        with patch.object(yandex_disk, "_request") as mock_request:
+            # Сначала GET кидает NetworkError с 404
+            mock_request.side_effect = [
+                NetworkError("404 Not Found"),
+                MagicMock()  # для PUT
+            ]
+            yandex_disk._ensure_folder()
+            # Должны быть вызовы: GET и затем PUT
+            assert mock_request.call_count == 2
+            mock_request.assert_any_call("GET", params={"path": "test_folder"})
+            mock_request.assert_any_call("PUT", params={"path": "test_folder"})
+
+    def test_other_network_error_raises(self, yandex_disk):
+        """Если GET вернул не 404 (например, 401), исключение пробрасывается."""
+        with patch.object(yandex_disk, "_request") as mock_request:
+            mock_request.side_effect = NetworkError("401 Unauthorized")
+            with pytest.raises(NetworkError):
+                yandex_disk._ensure_folder()
+            mock_request.assert_called_once_with("GET", params={"path": "test_folder"})
 
 
 # Тесты для get_info
@@ -132,11 +169,25 @@ class TestGetInfo:
 # Тесты для _get_upload_link
 class TestGetUploadLink:
     def test_get_upload_link_success(self, yandex_disk):
-        """Успешное получение ссылки для загрузки."""
+        """Успешное получение ссылки для загрузки (overwrite=True по умолчанию)."""
         mock_response = MagicMock()
         mock_response.json.return_value = {"href": "https://upload.url"}
         with patch.object(yandex_disk, "_request", return_value=mock_response) as mock_req:
             href = yandex_disk._get_upload_link("path/to/file", overwrite=True)
+
+        assert href == "https://upload.url"
+        mock_req.assert_called_once_with(
+            "GET",
+            url="https://cloud-api.yandex.net/v1/disk/resources/upload",
+            params={"path": "path/to/file", "overwrite": "true"},
+        )
+
+    def test_get_upload_link_default_overwrite(self, yandex_disk):
+        """По умолчанию overwrite=True."""
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"href": "https://upload.url"}
+        with patch.object(yandex_disk, "_request", return_value=mock_response) as mock_req:
+            href = yandex_disk._get_upload_link("path/to/file")
 
         assert href == "https://upload.url"
         mock_req.assert_called_once_with(
@@ -154,89 +205,53 @@ class TestGetUploadLink:
                 yandex_disk._get_upload_link("some/path")
 
 
-# Тесты для load
-class TestLoad:
+# Тесты для upload (объединяет старые load и reload)
+class TestUpload:
     @patch("builtins.open", new_callable=mock_open, read_data=b"data")
     @patch("requests.put")
-    def test_load_success(self, mock_put, mock_file_open, yandex_disk):
-        """Успешная загрузка нового файла."""
-        # Мокаем получение ссылки
+    def test_upload_success(self, mock_put, mock_file_open, yandex_disk):
+        """Успешная загрузка/перезапись файла."""
         with patch.object(
             yandex_disk, "_get_upload_link", return_value="https://upload.url"
         ) as mock_get_link:
             mock_put.return_value = MagicMock(status_code=201)
             mock_put.return_value.raise_for_status.return_value = None
 
-            yandex_disk.load("local/path/file.txt")
+            yandex_disk.upload("local/path/file.txt")
 
-        mock_get_link.assert_called_once_with("test_folder/file.txt")
+        mock_get_link.assert_called_once_with("test_folder/file.txt", overwrite=True)
         mock_file_open.assert_called_once_with("local/path/file.txt", "rb")
         mock_put.assert_called_once_with(
             "https://upload.url", data=mock_file_open.return_value, timeout=30
         )
 
-    def test_load_file_not_found(self, yandex_disk):
+    def test_upload_file_not_found(self, yandex_disk):
         """Загрузка несуществующего файла – FileProcessingError."""
         with patch.object(yandex_disk, "_get_upload_link", return_value="url"):
             with patch("builtins.open", side_effect=FileNotFoundError):
                 with pytest.raises(FileProcessingError, match="Файл не найден"):
-                    yandex_disk.load("missing.txt")
+                    yandex_disk.upload("missing.txt")
 
     @patch("builtins.open", new_callable=mock_open)
     @patch("requests.put")
-    def test_load_network_error(self, mock_put, mock_file_open, yandex_disk):
+    def test_upload_network_error(self, mock_put, mock_file_open, yandex_disk):
         """Ошибка при PUT-запросе – NetworkError."""
         with patch.object(yandex_disk, "_get_upload_link", return_value="url"):
             mock_put.side_effect = requests.RequestException("Timeout")
-            with pytest.raises(NetworkError, match="загрузка файла"):
-                yandex_disk.load("local/file.txt")
-
-
-# Тесты для reload (аналогичны load, но с overwrite=True)
-class TestReload:
-    @patch("builtins.open", new_callable=mock_open)
-    @patch("requests.put")
-    def test_reload_success(self, mock_put, mock_file_open, yandex_disk):
-        """Успешная перезапись файла."""
-        with patch.object(
-            yandex_disk, "_get_upload_link", return_value="https://upload.url"
-        ) as mock_get_link:
-            mock_put.return_value = MagicMock(status_code=200)
-            mock_put.return_value.raise_for_status.return_value = None
-
-            yandex_disk.reload("local/path/file.txt")
-
-        mock_get_link.assert_called_once_with("test_folder/file.txt", overwrite=True)
-        mock_put.assert_called_once()
-
-    def test_reload_file_not_found(self, yandex_disk):
-        """Перезапись отсутствующего локального файла."""
-        with patch.object(yandex_disk, "_get_upload_link", return_value="url"):
-            with patch("builtins.open", side_effect=FileNotFoundError):
-                with pytest.raises(FileProcessingError):
-                    yandex_disk.reload("missing.txt")
+            with pytest.raises(NetworkError, match="загрузка/перезапись файла"):
+                yandex_disk.upload("local/file.txt")
 
 
 # Тесты для delete
 class TestDelete:
     def test_delete_success(self, yandex_disk):
         """Успешное удаление файла."""
-        mock_response = MagicMock()
-        mock_response.status_code = 204
-        with patch.object(yandex_disk, "_request", return_value=mock_response) as mock_req:
+        with patch.object(yandex_disk, "_request") as mock_req:
             yandex_disk.delete("file_to_delete.txt")
 
         mock_req.assert_called_once_with(
             "DELETE", params={"path": "test_folder/file_to_delete.txt"}
         )
-
-    def test_delete_failure_non_204(self, yandex_disk):
-        """Ответ с кодом не 204 – NetworkError."""
-        mock_response = MagicMock()
-        mock_response.status_code = 500
-        with patch.object(yandex_disk, "_request", return_value=mock_response):
-            with pytest.raises(NetworkError, match="HTTP 500"):
-                yandex_disk.delete("bad_file.txt")
 
     def test_delete_request_exception(self, yandex_disk):
         """Исключение при запросе – пробрасывается NetworkError."""

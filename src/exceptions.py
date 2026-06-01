@@ -8,16 +8,20 @@ class StorageError(Exception):
 
 
 class ConfigError(StorageError):
-    def __init__(self, param_name):
-        message = (
-            f"Ошибка конфигурации: параметр '{param_name}' отсутствует или неверен."
-        )
+    def __init__(self, param_name=None):
+        if param_name:
+            message = f"Ошибка конфигурации: параметр '{param_name}' отсутствует или неверен."
+        else:
+            message = "Ошибка конфигурации: отсутствуют или неверны параметры."
         super().__init__(message)
 
 
 class FileProcessingError(StorageError):
-    def __init__(self, filename, details=None):
-        message = f"Ошибка обработки файла '{filename}'"
+    def __init__(self, filename=None, details=None):
+        if filename:
+            message = f"Ошибка обработки файла '{filename}'"
+        else:
+            message = "Ошибка обработки файла"
         if details:
             message += f": {details}"
         super().__init__(message)
