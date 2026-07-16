@@ -3,15 +3,15 @@ requires = ["setuptools>=64.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "data_synchronization_server_project"
+name = "sync-server"
 version = "0.1.0"
 description = "Программа для синхронизации файлов между локальной файловой системой и Яндекс.Диском."
 authors = [
-    { name = "Anastasia Gogokhiya", email = "nastasyaogokhiya@gmail.com" }
+    {name = "Anastasia Gogokhiya", email = "nastasyaogokhiya@gmail.com"}
 ]
 readme = "README.md"
 requires-python = ">=3.9"
-
+license = {text = "MIT"}
 
 dependencies = [
     "python-dotenv>=1.0.0",
@@ -27,22 +27,45 @@ dev = [
     "ruff>=0.5.0",
     "mypy",
     "types-requests",
-
 ]
-
-[tool.coverage.run]
-source = ['.']
-omit = [
-    '*/tests/*',
-    '*/venv/*',
-    '*/__pycache__/*/',]
 
 [project.scripts]
 sync-files = "src.main:main"
 
 [tool.setuptools]
-packages = { include = ["src", "src.*"] }
+packages = ["src"]
 
+[tool.coverage.run]
+source = ["."]
+omit = [
+    "*/tests/*",
+    "*/venv/*",
+    "*/__pycache__/*",
+]
 
-# pip install -e .
-# pip install -e .[dev]
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if TYPE_CHECKING:",
+]
+
+[tool.ruff]
+line-length = 88
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B"]
+
+[tool.mypy]
+python_version = "3.12"
+ignore_missing_imports = true
+strict = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = [
+    "-v",
+    "--cov=src",
+    "--cov-report=term-missing",
+    "--cov-report=html",
+]
