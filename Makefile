@@ -36,20 +36,16 @@ coverage:
 all: lint type-check test coverage
 	@echo "✅ All checks passed!"
 
-
-
 # Создание окружения, установка зависимостей, создание .env файла из шаблона
 .PHONY: launch-linux launch-win
 
 launch-linux:
-	cd data_synchronization_server_project && \
 	python -m venv venv && \
 	venv/bin/python -m pip install -e . && \
 	venv/bin/python -m pip install -e .[dev] && \
 	cp .env.example .env || true
 
 launch-win:
-	cd data_synchronization_server_project && \
 	python -m venv venv && \
 	venv\Scripts\python -m pip install -e . && \
 	venv\Scripts\python -m pip install -e .[dev] && \

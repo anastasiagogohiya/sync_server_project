@@ -28,7 +28,7 @@
 1. **Клонируйте репозиторий**
    ```bash
    git clone https://github.com/your-username/data_synchronization_server_project.git
-   cd data_synchronization_server_project
+   cd cd sync_server_project
    ```
 2. **Создание виртуального окружения, активация этого окружения,
      установка зависимостей и создание .env файла из шаблона (автоматически)**
