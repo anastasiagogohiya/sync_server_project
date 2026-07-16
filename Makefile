@@ -3,7 +3,7 @@
 # Запуск программы
 .PHONY: run
 run:
-	python -m src.main
+	python3 -m src.main
 
 # Линтеры, тесты, покрытие тестами
 .PHONY: help lint format type-check test coverage all
@@ -40,7 +40,7 @@ all: lint type-check test coverage
 .PHONY: launch-linux launch-win
 
 launch-linux:
-	python -m venv venv && \
+	python3 -m venv venv && \
 	venv/bin/python -m pip install -e . && \
 	venv/bin/python -m pip install -e .[dev] && \
 	cp .env.example .env || true
